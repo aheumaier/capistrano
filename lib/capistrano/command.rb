@@ -38,15 +38,15 @@ module Capistrano
         @channels.each do |ch|
           next if ch[:closed]
           active += 1
-          ch.connection.process(true)
+          ch.connection.process(0.01)
         end
 
         break if active == 0
-        if Time.now - since >= 1
-          since = Time.now
-          @channels.each { |ch| ch.connection.ping! }
-        end
-        sleep 0.01 # a brief respite, to keep the CPU from going crazy
+        # FIXME add connection.ping!
+        #if Time.now - since >= 1
+        #  since = Time.now
+        #  @channels.each { |ch| ch.connection.ping! }
+        #end
       end
 
       logger.trace "command finished" if logger
@@ -83,38 +83,37 @@ module Capistrano
             channel[:server] = server
             channel[:host] = server.host
             channel[:options] = options
-            channel.request_pty :want_reply => true
-
-            channel.on_success do |ch|
-              logger.trace "executing command", ch[:server] if logger
-              escaped = replace_placeholders(command, ch).gsub(/[$\\`"]/) { |m| "\\#{m}" }
-              command_line = [environment, options[:shell] || "sh", "-c", "\"#{escaped}\""].compact.join(" ")
-              ch.exec(command_line)
-              ch.send_data(options[:data]) if options[:data]
-            end
-
-            channel.on_failure do |ch|
-              # just log it, don't actually raise an exception, since the
-              # process method will see that the status is not zero and will
-              # raise an exception then.
-              logger.important "could not open channel", ch[:server] if logger
-              ch.close
-            end
-
-            channel.on_data do |ch, data|
-              @callback[ch, :out, data] if @callback
-            end
-
-            channel.on_extended_data do |ch, type, data|
-              @callback[ch, :err, data] if @callback
-            end
-
-            channel.on_request do |ch, request, reply, data|
-              ch[:status] = data.read_long if request == "exit-status"
-            end
 
             channel.on_close do |ch|
               ch[:closed] = true
+            end
+
+            channel.request_pty do |ch, success|
+              if success
+                logger.trace "executing command", ch[:server] if logger
+                escaped = replace_placeholders(command, ch).gsub(/[$\\`"]/) { |m| "\\#{m}" }
+                command_line = [environment, options[:shell] || "sh", "-c", "\"#{escaped}\""].compact.join(" ")
+                ch.exec(command_line)
+                ch.send_data(options[:data]) if options[:data]
+
+                channel.on_data do |ch, data|
+                  @callback[ch, :out, data] if @callback
+                end
+
+                channel.on_extended_data do |ch, type, data|
+                  @callback[ch, :err, data] if @callback
+                end
+
+                channel.on_request do |ch, request, reply, data|
+                  ch[:status] = data.read_long if request == "exit-status"
+                end
+              else
+                # just log it, don't actually raise an exception, since the
+                # process method will see that the status is not zero and will
+                # raise an exception then.
+                logger.important "could not open channel", ch[:server] if logger
+                ch.close
+              end
             end
           end
         end
