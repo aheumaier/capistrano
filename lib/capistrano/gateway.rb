@@ -55,9 +55,7 @@ module Capistrano
           SSH.connect(server, @options) do |@session|
             logger.trace "gateway connection established" if logger
             mutex.synchronize { waiter.signal }
-            @session.loop do
-              !@terminate_thread
-            end
+            @session.loop(1) { !@terminate_thread }
           end
         end
 
